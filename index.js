@@ -15,6 +15,7 @@ app.use(express.json());
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ufdxsbo.mongodb.net/?retryWrites=true&w=majority`;
 const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true, serverApi: ServerApiVersion.v1 });
 
+// jwt middleware
 const verifyJwt = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -47,6 +48,20 @@ dbConnect();
 const appointmentOptionCollection = client.db('doctorsPortal').collection('appointmentOptions');
 const bookingsCollection = client.db('doctorsPortal').collection('bookings');
 const usersCollection = client.db('doctorsPortal').collection('users');
+const doctorsCollection = client.db('doctorsPortal').collection('doctors');
+
+// NOTE: make sure you use verify admin after verify jwt
+const verifyAdmin = async (req, res, next) => {
+  console.log('inside verify admin', req.decoded.email);
+  const decodedEmail = req.decoded.email;
+  const query = { email: decodedEmail };
+  const user = await usersCollection.findOne(query);
+  if (user?.role !== 'admin') {
+    return res.status(403).send({ message: 'forbidden access' });
+  }
+  next();
+}
+
 
 // appointment options get
 // use aggregate to query multiple collection and then merge data
@@ -243,14 +258,14 @@ app.get('/users', async (req, res) => {
 });
 
 // admin role
-app.put('/users/admin/:id', verifyJwt, async (req, res) => {
+app.put('/users/admin/:id', verifyJwt, verifyAdmin, async (req, res) => {
   try {
-    const decodedEmail = req.decoded.email;
-    const query = { email: decodedEmail };
-    const user = await usersCollection.findOne(query);
-    if (user?.role !== 'role') {
-      return res.status(403).send({ message: 'forbidden access' });
-    }
+    // const decodedEmail = req.decoded.email;
+    // const query = { email: decodedEmail };
+    // const user = await usersCollection.findOne(query);
+    // if (user?.role !== 'admin') {
+    //   return res.status(403).send({ message: 'forbidden access' });
+    // }
 
     const id = req.params.id;
     const filter = { _id: ObjectId(id) };
@@ -271,15 +286,82 @@ app.put('/users/admin/:id', verifyJwt, async (req, res) => {
   }
 });
 
+
 app.get('/users/admin/:email', async (req, res) => {
   try {
     const email = req.params.email;
-    const query = {email}
+    const query = { email }
     const user = await usersCollection.findOne(query);
-    res.send({isAdmin: user?.role === 'admin'})
+    res.send({ isAdmin: user?.role === 'admin' })
 
   } catch (error) {
-    
+    res.send({
+      success: false,
+      error: error.message
+    })
+  }
+});
+
+app.get('/appointmentSpecialty', async (req, res) => {
+  try {
+    const query = {};
+    const result = await appointmentOptionCollection.find(query).project({ name: 1 }).toArray();
+
+    res.send(result);
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    })
+  }
+});
+
+// post doctors data
+app.post('/doctors', verifyJwt, verifyAdmin, async (req, res) => {
+  try {
+    const doctor = req.body;
+    const result = await doctorsCollection.insertOne(doctor);
+
+    res.send(result);
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    })
+  }
+});
+
+// get doctors data
+app.get('/doctors', verifyJwt, verifyAdmin, async (req, res) => {
+  try {
+    const query = {};
+    const doctors = await doctorsCollection.find(query).toArray();
+    res.send(doctors);
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// delete a doctor
+app.delete('/doctors/:id', verifyJwt, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const query = { _id: ObjectId(id) };
+    const result = await doctorsCollection.deleteOne(query);
+
+    res.send(result);
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    });
   }
 })
 
