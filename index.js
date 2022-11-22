@@ -1,10 +1,11 @@
 const express = require('express');
+const app = express();
+require('dotenv').config();
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
-const app = express();
 const port = process.env.PORT || 5000;
+const stripe = require('stripe')(process.env.STRIPE_SECRET);
 
 // middleware
 app.use(cors());
@@ -49,10 +50,11 @@ const appointmentOptionCollection = client.db('doctorsPortal').collection('appoi
 const bookingsCollection = client.db('doctorsPortal').collection('bookings');
 const usersCollection = client.db('doctorsPortal').collection('users');
 const doctorsCollection = client.db('doctorsPortal').collection('doctors');
+const paymentsCollection = client.db('doctorsPortal').collection('payments');
 
 // NOTE: make sure you use verify admin after verify jwt
 const verifyAdmin = async (req, res, next) => {
-  console.log('inside verify admin', req.decoded.email);
+  // console.log('inside verify admin', req.decoded.email);
   const decodedEmail = req.decoded.email;
   const query = { email: decodedEmail };
   const user = await usersCollection.findOne(query);
@@ -119,6 +121,7 @@ app.get('/v2/appointmentOptions', async (req, res) => {
         $project: {
           name: 1,
           slots: 1,
+          price: 1,
           booked: {
             $map: {
               input: '$booked',
@@ -131,6 +134,7 @@ app.get('/v2/appointmentOptions', async (req, res) => {
       {
         $project: {
           name: 1,
+          price: 1,
           slots: {
             $setDifference: ['$slots', '$booked']
           }
@@ -170,6 +174,22 @@ app.get('/bookings', verifyJwt, async (req, res) => {
       error: error.message
     })
   }
+});
+
+app.get('/bookings/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const query = { _id: ObjectId(id) };
+    const booking = await bookingsCollection.findOne(query);
+
+    res.send(booking);
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    })
+  }
 })
 
 // bookings get
@@ -202,6 +222,55 @@ app.post('/bookings', async (req, res) => {
   }
 });
 
+// stripe payment
+app.post('/create-payment-intent', async (req, res) => {
+  try {
+    const booking = req.body;
+    const price = booking.price;
+    const amount = price * 1000;
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      currency: 'usd',
+      amount: amount,
+      "payment_method_types": [
+        "card"
+      ],
+    })
+    res.send({
+      clientSecret: paymentIntent.client_secret,
+    })
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    })
+  }
+});
+
+app.post('/payments', async (req, res) => {
+  try {
+    const payment = req.body;
+    const result = await paymentsCollection.insertOne(payment);
+    const id = payment.bookingId;
+    const filter = { _id: ObjectId(id) };
+    const updatedDoc = {
+      $set: {
+        paid: true,
+        transactionId: payment.transactionId
+      }
+    };
+    const updatedResult = await bookingsCollection.updateOne(filter, updatedDoc);
+    res.send({result, updatedResult});
+
+  } catch (error) {
+    res.send({
+      success: false,
+      error: error.message
+    })
+  }
+})
+
 // jwt
 app.get('/jwt', async (req, res) => {
   try {
@@ -224,6 +293,7 @@ app.get('/jwt', async (req, res) => {
     })
   }
 });
+
 
 // post users
 app.post('/users', async (req, res) => {
@@ -363,7 +433,28 @@ app.delete('/doctors/:id', verifyJwt, verifyAdmin, async (req, res) => {
       error: error.message
     });
   }
-})
+});
+
+// temporary to update price filed on appointment options
+// app.get('/addPrice', async (req, res) => {
+//   try {
+//     const filter = {};
+//     const options = { upsert: true };
+//     const updatedDoc = {
+//       $set: {
+//         price: 99
+//       }
+//     };
+//     const result = await appointmentOptionCollection.updateMany(filter, updatedDoc, options);
+//     res.send(result);
+
+//   } catch (error) {
+//     res.send({
+//       success: false,
+//       error: error.message
+//     });
+//   }
+// })
 
 app.get('/', (req, res) => {
   res.send('Doctors portal server is running');
